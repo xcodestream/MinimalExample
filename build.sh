@@ -50,7 +50,9 @@ ensure_submodule() {
     command -v git >/dev/null 2>&1 || \
         die "каталог $SUBMODULE_DIR пуст, а git не найден: установите git или клонируйте репозиторий с --recurse-submodules"
 
-    if git -C "$ROOT" config --file .gitmodules --get "submodule.$SUBMODULE_DIR.path" >/dev/null 2>&1; then
+    # Запись в .gitmodules без gitlink в индексе не считается регистрацией:
+    # submodule update --init в этом случае молча ничего не скачивает.
+    if git -C "$ROOT" ls-files -s -- "$SUBMODULE_DIR" | grep -q '^160000'; then
         log "Submodule $SUBMODULE_DIR зарегистрирован, но не скачан — инициализирую"
     else
         log "Submodule $SUBMODULE_DIR отсутствует — добавляю ($SUBMODULE_URL)"
