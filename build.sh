@@ -12,6 +12,7 @@
 #   ./build.sh ios            # Xcode-проект iOS (arm64) -> build/ios
 #   ./build.sh android        # NDK arm64-v8a (нужен ANDROID_NDK_HOME) -> build/android
 #   ./build.sh all            # всё, что доступно на этой машине
+#   ./build.sh deps           # проверить/подтянуть submodule crossrender
 #   ./build.sh --clean        # пересборка с нуля
 #   ./build.sh --debug        # Debug вместо Release
 #   ./build.sh --jobs 8
@@ -21,6 +22,8 @@ set -u
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TARGET="host"
+SUBMODULE_DIR="crossrender"
+SUBMODULE_URL="https://github.com/xcodestream/CrossRender"
 BUILD_TYPE="Release"
 JOBS="$(getconf _NPROCESSORS_ONLN 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)"
 CLEAN=0
@@ -39,6 +42,29 @@ host_platform() {
     esac
 }
 
+# Проверяет наличие submodule с движком. Если каталог пуст или отсутствует —
+# добавляет submodule (когда он ещё не зарегистрирован в .gitmodules) и
+# рекурсивно подтягивает его содержимое.
+ensure_submodule() {
+    [[ -f "$ROOT/$SUBMODULE_DIR/CMakeLists.txt" ]] && return 0
+    command -v git >/dev/null 2>&1 || \
+        die "каталог $SUBMODULE_DIR пуст, а git не найден: установите git или клонируйте репозиторий с --recurse-submodules"
+
+    if git -C "$ROOT" config --file .gitmodules --get "submodule.$SUBMODULE_DIR.path" >/dev/null 2>&1; then
+        log "Submodule $SUBMODULE_DIR зарегистрирован, но не скачан — инициализирую"
+    else
+        log "Submodule $SUBMODULE_DIR отсутствует — добавляю ($SUBMODULE_URL)"
+        git -C "$ROOT" submodule add "$SUBMODULE_URL" "$SUBMODULE_DIR" || \
+            die "не удалось добавить submodule $SUBMODULE_DIR"
+    fi
+    log "Подтягиваю submodule рекурсивно"
+    git -C "$ROOT" submodule update --init --recursive || \
+        die "не удалось подтянуть submodule $SUBMODULE_DIR"
+    [[ -f "$ROOT/$SUBMODULE_DIR/CMakeLists.txt" ]] || \
+        die "submodule $SUBMODULE_DIR скачан, но $SUBMODULE_DIR/CMakeLists.txt не найден"
+    log "Submodule $SUBMODULE_DIR готов"
+}
+
 usage() {
     cat <<EOF
 MinimalExample — минимальный пример CrossRender (переливающийся алфавит)
@@ -46,6 +72,7 @@ MinimalExample — минимальный пример CrossRender (перели
 Использование: ./build.sh [цель] [опции]
 
 Цели:
+  deps      проверить submodule crossrender; если его нет — добавить и рекурсивно подтянуть
   host      сборка под текущую ОС (по умолчанию)
   macos     macOS (Cocoa + OpenGL 3.3) — только на Mac
   linux     Linux (X11 + GLX)
@@ -67,7 +94,7 @@ EOF
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        host|macos|linux|windows|wasm|ios|android|all) TARGET="$1" ;;
+        host|macos|linux|windows|wasm|ios|android|all|deps) TARGET="$1" ;;
         run)        RUN_AFTER=1 ;;
         --debug)    BUILD_TYPE=Debug ;;
         --release)  BUILD_TYPE=Release ;;
@@ -86,7 +113,11 @@ configure_and_build() {
     local dir="$1"; shift
     [[ "$CLEAN" == "1" ]] && rm -rf "$dir"
     mkdir -p "$dir"
-    log "Конфигурация ($BUILD_TYPE)${*:-> $*}"
+    if [[ $# -gt 0 ]]; then
+        log "Конфигурация ($BUILD_TYPE): $*"
+    else
+        log "Конфигурация ($BUILD_TYPE)"
+    fi
     cmake -S "$ROOT" -B "$dir" -DCMAKE_BUILD_TYPE="$BUILD_TYPE" "$@" || die "конфигурация не удалась"
     log "Сборка (--parallel $JOBS)"
     cmake --build "$dir" --config "$BUILD_TYPE" --parallel "$JOBS" || die "сборка не удалась"
@@ -191,6 +222,7 @@ case "$TARGET" in
     wasm)    build_wasm ;;
     ios)     build_ios ;;
     android) build_android ;;
+    deps)    ensure_submodule ;;  # только по явному запросу пользователя
     all)
         case "$(host_platform)" in
             macos)
