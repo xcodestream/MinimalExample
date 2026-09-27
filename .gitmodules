@@ -1,0 +1,3 @@
+[submodule "crossrender"]
+	path = crossrender
+	url = https://github.com/xcodestream/CrossRender
